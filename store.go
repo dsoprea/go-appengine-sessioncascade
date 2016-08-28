@@ -190,6 +190,94 @@ func (cs *CascadeStore) Save(r *http.Request, w http.ResponseWriter, session *se
     return nil
 }
 
+func (cs *CascadeStore) serializeSession(session *sessions.Session) []byte {
+    if serialized, err := cs.serializer.Serialize(session); err != nil {
+        panic(err)
+    } else if cs.maxLength != 0 && len(serialized) > cs.maxLength {
+        panic(ValueTooBigError)
+    } else {
+        return serialized
+    }
+}
+
+func (cs *CascadeStore) setInRequest(r *http.Request, session *sessions.Session, key string, serialized []byte) (err error) {
+    ctx := appengine.NewContext(r)
+
+    defer func() {
+        if r := recover(); r != nil {
+            err := r.(error)
+            log.Errorf(ctx, "Could not save session in request: %s", err)
+        }
+    }()
+
+    if (cs.backendTypes & RequestBackend) == 0 {
+        return nil
+    }
+
+    log.Debugf(ctx, "Writing session to request: [%s]", session.ID)
+
+    if serialized == nil {
+        serialized = cs.serializeSession(session)
+    }
+
+    age := session.Options.MaxAge
+    if age == 0 {
+        age = cs.DefaultMaxAge
+    }
+
+    expires := time.Second * time.Duration(age)
+    expiresAt := time.Now().Add(expires)
+
+    item := &requestItem{
+        Value: serialized,
+        ExpiresAt: expiresAt,
+    }
+
+    gcontext.Set(r, key, item)
+
+    return nil
+}
+
+func (cs *CascadeStore) setInMemcache(r *http.Request, session *sessions.Session, key string, serialized []byte) (err error) {
+    ctx := appengine.NewContext(r)
+
+    defer func() {
+        if r := recover(); r != nil {
+            err := r.(error)
+            log.Errorf(ctx, "Could not save session in Memcache: %s", err)
+        }
+    }()
+
+    if (cs.backendTypes & MemcacheBackend) == 0 {
+        return nil
+    }
+
+    log.Debugf(ctx, "Writing session to Memcache: [%s]", session.ID)
+
+    if serialized == nil {
+        serialized = cs.serializeSession(session)
+    }
+
+    age := session.Options.MaxAge
+    if age == 0 {
+        age = cs.DefaultMaxAge
+    }
+
+    expires := time.Second * time.Duration(age)
+
+    item := &memcache.Item{
+        Key: key,
+        Value: serialized,
+        Expiration: expires,
+    }
+
+    if err := memcache.Set(ctx, item); err != nil {
+        panic(err)
+    }
+
+    return nil
+}
+
 // save stores the session in redis.
 func (cs *CascadeStore) save(r *http.Request, session *sessions.Session) (err error) {
     ctx := appengine.NewContext(r)
@@ -204,12 +292,14 @@ func (cs *CascadeStore) save(r *http.Request, session *sessions.Session) (err er
     log.Debugf(ctx, "Saving session: [%s]", session.ID)
 
     key := cs.keyPrefix + session.ID
+    serialized := cs.serializeSession(session)
 
-    var serialized []byte
-    if serialized, err = cs.serializer.Serialize(session); err != nil {
+    if err := cs.setInRequest(r, session, key, serialized); err != nil {
         panic(err)
-    } else if cs.maxLength != 0 && len(serialized) > cs.maxLength {
-        panic(ValueTooBigError)
+    }
+
+    if err := cs.setInMemcache(r, session, key, serialized); err != nil {
+        panic(err)
     }
 
     age := session.Options.MaxAge
@@ -219,31 +309,6 @@ func (cs *CascadeStore) save(r *http.Request, session *sessions.Session) (err er
 
     expires := time.Second * time.Duration(age)
     expiresAt := time.Now().Add(expires)
-
-    if (cs.backendTypes & RequestBackend) > 0 {
-        log.Debugf(ctx, "Writing session to Request: [%s]", key)
-
-        item := &requestItem{
-            Value: serialized,
-            ExpiresAt: expiresAt,
-        }
-
-        gcontext.Set(r, key, item)
-    }
-
-    if (cs.backendTypes & MemcacheBackend) > 0 {
-        log.Debugf(ctx, "Writing session to Memcache: [%s]", key)
-
-        item := &memcache.Item{
-            Key: key,
-            Value: serialized,
-            Expiration: expires,
-        }
-
-        if err := memcache.Set(ctx, item); err != nil {
-            panic(err)
-        }
-    }
 
     if (cs.backendTypes & DatastoreBackend) > 0 {
         log.Debugf(ctx, "Writing session to Datastore: [%s]", key)
@@ -310,6 +375,10 @@ func (cs *CascadeStore) load(r *http.Request, session *sessions.Session) (succes
         } else if err == nil {
             value = item.Value
             log.Debugf(ctx, "Found session in Memcache: [%s]", key)
+
+            if err := cs.setInRequest(r, session, key, value); err != nil {
+                panic(err)
+            }
         }
     }
 
@@ -328,6 +397,15 @@ func (cs *CascadeStore) load(r *http.Request, session *sessions.Session) (succes
             if now.Before(s.ExpiresAt) {
                 value = s.Value
                 log.Debugf(ctx, "Found session in Datastore: [%s]", key)
+/*
+                if err := cs.setInRequest(r, session, key, value); err != nil {
+                    panic(err)
+                }
+
+                if err := cs.setInMemcache(r, session, key, value); err != nil {
+                    panic(err)
+                }
+*/
             } else if err := cs.delete(r, session); err != nil {
                 panic(err)
             }
