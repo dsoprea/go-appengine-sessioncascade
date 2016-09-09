@@ -10,9 +10,6 @@ import (
     "github.com/gorilla/sessions"
 )
 
-var (
-)
-
 // SessionSerializer provides an interface hook for alternative serializers
 type SessionSerializer interface {
     Deserialize(d []byte, ss *sessions.Session) error
@@ -29,7 +26,6 @@ func (s JSONSerializer) Serialize(ss *sessions.Session) ([]byte, error) {
         ks, ok := k.(string)
         if !ok {
             err := fmt.Errorf("Non-string key value, cannot serialize session to JSON: %v", k)
-            fmt.Printf("redistore.JSONSerializer.serialize() Error: %v", err)
             return nil, err
         }
         m[ks] = v

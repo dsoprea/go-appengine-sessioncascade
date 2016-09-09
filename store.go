@@ -8,19 +8,28 @@ import (
     "strings"
     "errors"
     "time"
+    "os"
+    "strconv"
 
     "google.golang.org/appengine"
-    "google.golang.org/appengine/log"
     "google.golang.org/appengine/memcache"
     "google.golang.org/appengine/datastore"
 
     "github.com/gorilla/securecookie"
     "github.com/gorilla/sessions"
     gcontext "github.com/gorilla/context"
+    "github.com/dsoprea/go-appengine-logging"
+
 )
 
+// Config keys
+const (
+    CkDoDisplayLogging = "SessionCascadeDisplayLogging"
+)
+
+// Config
 var (
-    ValueTooBigError = errors.New("SessionStore: the value to store is too big")
+    DoDisplayLogging = os.Getenv(CkDoDisplayLogging)
 )
 
 const (
@@ -47,6 +56,16 @@ const (
     MaxValueLength = 4096
     DefaultMaxAgeSeconds = 60 * 20
     DefaultKeyPrefix = "session."
+)
+
+// Errors
+var (
+    ErrValueTooBig = errors.New("SessionStore: the value to store is too big")
+)
+
+// Other
+var (
+    store_log = log.NewLogger("sc.store")
 )
 
 // For datastore.
@@ -194,7 +213,7 @@ func (cs *CascadeStore) serializeSession(session *sessions.Session) []byte {
     if serialized, err := cs.serializer.Serialize(session); err != nil {
         panic(err)
     } else if cs.maxLength != 0 && len(serialized) > cs.maxLength {
-        panic(ValueTooBigError)
+        panic(ErrValueTooBig)
     } else {
         return serialized
     }
@@ -206,7 +225,7 @@ func (cs *CascadeStore) setInRequest(r *http.Request, session *sessions.Session,
     defer func() {
         if r := recover(); r != nil {
             err := r.(error)
-            log.Errorf(ctx, "Could not save session in request: %s", err)
+            store_log.Errorf(ctx, "Could not save session in request: %s", err)
         }
     }()
 
@@ -214,7 +233,7 @@ func (cs *CascadeStore) setInRequest(r *http.Request, session *sessions.Session,
         return nil
     }
 
-    log.Debugf(ctx, "Writing session to request: [%s]", session.ID)
+    store_log.Debugf(ctx, "Writing session to request: [%s]", session.ID)
 
     if serialized == nil {
         serialized = cs.serializeSession(session)
@@ -244,7 +263,7 @@ func (cs *CascadeStore) setInMemcache(r *http.Request, session *sessions.Session
     defer func() {
         if r := recover(); r != nil {
             err := r.(error)
-            log.Errorf(ctx, "Could not save session in Memcache: %s", err)
+            store_log.Errorf(ctx, "Could not save session in Memcache: %s", err)
         }
     }()
 
@@ -252,7 +271,7 @@ func (cs *CascadeStore) setInMemcache(r *http.Request, session *sessions.Session
         return nil
     }
 
-    log.Debugf(ctx, "Writing session to Memcache: [%s]", session.ID)
+    store_log.Debugf(ctx, "Writing session to Memcache: [%s]", session.ID)
 
     if serialized == nil {
         serialized = cs.serializeSession(session)
@@ -285,11 +304,11 @@ func (cs *CascadeStore) save(r *http.Request, session *sessions.Session) (err er
     defer func() {
         if r := recover(); r != nil {
             err := r.(error)
-            log.Errorf(ctx, "Could not save session: %s", err)
+            store_log.Errorf(ctx, "Could not save session: %s", err)
         }
     }()
 
-    log.Debugf(ctx, "Saving session: [%s]", session.ID)
+    store_log.Debugf(ctx, "Saving session: [%s]", session.ID)
 
     key := cs.keyPrefix + session.ID
     serialized := cs.serializeSession(session)
@@ -311,7 +330,7 @@ func (cs *CascadeStore) save(r *http.Request, session *sessions.Session) (err er
     expiresAt := time.Now().Add(expires)
 
     if (cs.backendTypes & DatastoreBackend) > 0 {
-        log.Debugf(ctx, "Writing session to Datastore: [%s]", key)
+        store_log.Debugf(ctx, "Writing session to Datastore: [%s]", key)
 
         s := &sessionKind{
             Value: serialized,
@@ -335,13 +354,13 @@ func (cs *CascadeStore) load(r *http.Request, session *sessions.Session) (succes
     defer func() {
         if r := recover(); r != nil {
             err := r.(error)
-            log.Errorf(ctx, "Could not load session: %s", err)
+            store_log.Errorf(ctx, "Could not load session: %s", err)
         }
     }()
 
     success = false
 
-    log.Debugf(ctx, "Loading session: [%s]", session.ID)
+    store_log.Debugf(ctx, "Loading session: [%s]", session.ID)
 
     key := cs.keyPrefix + session.ID
     var value []byte
@@ -355,7 +374,7 @@ func (cs *CascadeStore) load(r *http.Request, session *sessions.Session) (succes
             item := itemRaw.(requestItem)
             if now.Before(item.ExpiresAt) {
                 value = item.Value
-                log.Debugf(ctx, "Found session in request: [%s]", key)
+                store_log.Debugf(ctx, "Found session in request: [%s]", key)
             } else {
                 gcontext.Delete(r, key)
             }
@@ -368,13 +387,13 @@ func (cs *CascadeStore) load(r *http.Request, session *sessions.Session) (succes
         var item *memcache.Item
         if item, err = memcache.Get(ctx, key); err != nil {
             if err == memcache.ErrCacheMiss {
-                log.Debugf(ctx, "Could not find session in Memcache: [%s]", key)
+                store_log.Debugf(ctx, "Could not find session in Memcache: [%s]", key)
             } else {
                 panic(err)
             }
         } else if err == nil {
             value = item.Value
-            log.Debugf(ctx, "Found session in Memcache: [%s]", key)
+            store_log.Debugf(ctx, "Found session in Memcache: [%s]", key)
 
             if err := cs.setInRequest(r, session, key, value); err != nil {
                 panic(err)
@@ -389,23 +408,14 @@ func (cs *CascadeStore) load(r *http.Request, session *sessions.Session) (succes
         s := &sessionKind{}
         if err := datastore.Get(ctx, k, s); err != nil {
             if err == datastore.ErrNoSuchEntity {
-                log.Debugf(ctx, "Could not find session in Datastore: [%s]", key)
+                store_log.Debugf(ctx, "Could not find session in Datastore: [%s]", key)
             } else {
                 panic(err)
             }
         } else if err == nil {
             if now.Before(s.ExpiresAt) {
                 value = s.Value
-                log.Debugf(ctx, "Found session in Datastore: [%s]", key)
-/*
-                if err := cs.setInRequest(r, session, key, value); err != nil {
-                    panic(err)
-                }
-
-                if err := cs.setInMemcache(r, session, key, value); err != nil {
-                    panic(err)
-                }
-*/
+                store_log.Debugf(ctx, "Found session in Datastore: [%s]", key)
             } else if err := cs.delete(r, session); err != nil {
                 panic(err)
             }
@@ -430,25 +440,25 @@ func (cs *CascadeStore) delete(r *http.Request, session *sessions.Session) (err 
     defer func() {
         if r := recover(); r != nil {
             err := r.(error)
-            log.Errorf(ctx, "Could not delete session: %s", err)
+            store_log.Errorf(ctx, "Could not delete session: %s", err)
         }
     }()
 
-    log.Debugf(ctx, "Deleting session: [%s]", session.ID)
+    store_log.Debugf(ctx, "Deleting session: [%s]", session.ID)
 
     key := cs.keyPrefix + session.ID
 
     if (cs.backendTypes & RequestBackend) > 0 {
-        log.Debugf(ctx, "Removing session from Request: [%s]", key)
+        store_log.Debugf(ctx, "Removing session from Request: [%s]", key)
         gcontext.Delete(r, key)
     }
 
     if (cs.backendTypes & MemcacheBackend) > 0 {
-        log.Debugf(ctx, "Removing session from Memcache: [%s]", key)
+        store_log.Debugf(ctx, "Removing session from Memcache: [%s]", key)
 
         if err := memcache.Delete(ctx, key); err != nil {
             if err == memcache.ErrCacheMiss {
-                log.Warningf(ctx, "Tried and failed to remove old session from Memcache: [%s]", key)
+                store_log.Warningf(ctx, "Tried and failed to remove old session from Memcache: [%s]", key)
             } else {
                 panic(err)
             }
@@ -456,13 +466,28 @@ func (cs *CascadeStore) delete(r *http.Request, session *sessions.Session) (err 
     }
 
     if (cs.backendTypes & DatastoreBackend) > 0 {
-        log.Debugf(ctx, "Removing session from Datastore: [%s]", key)
+        store_log.Debugf(ctx, "Removing session from Datastore: [%s]", key)
 
         k := datastore.NewKey(ctx, "Session", key, 0, nil)
         if err := datastore.Delete(ctx, k); err != nil {
-            log.Warningf(ctx, "Tried and failed to remove old session from Datastore: [%s]", key)
+            store_log.Warningf(ctx, "Tried and failed to remove old session from Datastore: [%s]", key)
         }
     }
 
     return nil
+}
+
+func init() {
+    doLogging := false
+    if DoDisplayLogging != "" {
+        if p, err := strconv.ParseBool(DoDisplayLogging); err != nil {
+            panic(err)
+        } else if p == true {
+            doLogging = true
+        }
+    }
+
+    if doLogging == false {
+        log.AddExcludeFilter("sc.store")
+    }
 }
