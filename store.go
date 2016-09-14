@@ -25,11 +25,16 @@ import (
 // Config keys
 const (
     CkDoDisplayLogging = "SessionCascadeDisplayLogging"
+    CkMaxMemcacheSessionSizeBytes = "MaxMemcacheSessionSizeBytes"
 )
 
 // Config
 var (
-    DoDisplayLogging = os.Getenv(CkDoDisplayLogging)
+    doDisplayLoggingRaw = os.Getenv(CkDoDisplayLogging)
+    maxMemcacheSessionSizeBytesRaw = os.Getenv(CkMaxMemcacheSessionSizeBytes)
+    
+    // The default is the appengine limit.
+    maxMemcacheSessionSizeBytes = 1024 * 1024
 )
 
 const (
@@ -269,6 +274,9 @@ func (cs *CascadeStore) setInMemcache(r *http.Request, session *sessions.Session
 
     if (cs.backendTypes & MemcacheBackend) == 0 {
         return nil
+    } else if maxMemcacheSessionSizeBytes > 0 && len(serializeSession) > maxMemcacheSessionSizeBytes {
+        store_log.Info(ctx, "Value for [%s] too large for Memcache. Skipping.", key)
+        return nil
     }
 
     store_log.Debugf(ctx, "Writing session to Memcache: [%s]", session.ID)
@@ -478,9 +486,12 @@ func (cs *CascadeStore) delete(r *http.Request, session *sessions.Session) (err 
 }
 
 func init() {
+    // Process logging config.
+
     doLogging := false
-    if DoDisplayLogging != "" {
-        if p, err := strconv.ParseBool(DoDisplayLogging); err != nil {
+
+    if doDisplayLoggingRaw != "" {
+        if p, err := strconv.ParseBool(doDisplayLoggingRaw); err != nil {
             panic(err)
         } else if p == true {
             doLogging = true
@@ -489,5 +500,15 @@ func init() {
 
     if doLogging == false {
         log.AddExcludeFilter("sc.store")
+    }
+
+    // Process storage constraints.
+
+    if maxMemcacheSessionSizeBytesRaw == "" {
+        if p, err := strconv.ParseInt(maxMemcacheSessionSizeBytesRaw, 10, 64); err != nil {
+            panic(err)
+        } else {
+            maxMemcacheSessionSizeBytes = p
+        }
     }
 }
