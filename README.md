@@ -68,4 +68,9 @@ func HandleRequest(w http.ResponseWriter, r *http.Request) {
 }
 ```
 
-For general session store usage information, see the [gorilla/sessions homepage](http://www.gorillatoolkit.org/pkg/sessions).
+
+## Other Notes
+
+- There is always the chance that you are going to store things bigger than Memcache can handle. By default, AppEngine has a one-megabyte size-limit for values in Memcache. *go-appengine-sessioncascade* will, by default, not try to push to Memcache if the serialized value is larger than this. Since you are probably ignoring Memcache errors, we could probably, technically, just ignore this as well. However, you would see error messages in your logging that might catch you off-guard. So, we prefer preventing them. If you want to change the size limit, define the `MaxMemcacheSessionSizeBytes` environment variable.
+
+- For general session store usage information, see the [gorilla/sessions homepage](http://www.gorillatoolkit.org/pkg/sessions).

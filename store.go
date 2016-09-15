@@ -34,7 +34,7 @@ var (
     maxMemcacheSessionSizeBytesRaw = os.Getenv(CkMaxMemcacheSessionSizeBytes)
     
     // The default is the appengine limit.
-    maxMemcacheSessionSizeBytes = 1024 * 1024
+    maxMemcacheSessionSizeBytes = int64(1024 * 1024)
 )
 
 const (
@@ -274,8 +274,8 @@ func (cs *CascadeStore) setInMemcache(r *http.Request, session *sessions.Session
 
     if (cs.backendTypes & MemcacheBackend) == 0 {
         return nil
-    } else if maxMemcacheSessionSizeBytes > 0 && len(serializeSession) > maxMemcacheSessionSizeBytes {
-        store_log.Info(ctx, "Value for [%s] too large for Memcache. Skipping.", key)
+    } else if maxMemcacheSessionSizeBytes > 0 && int64(len(serialized)) > maxMemcacheSessionSizeBytes {
+        store_log.Infof(ctx, "Value for [%s] too large for Memcache. Skipping.", key)
         return nil
     }
 
@@ -504,7 +504,7 @@ func init() {
 
     // Process storage constraints.
 
-    if maxMemcacheSessionSizeBytesRaw == "" {
+    if maxMemcacheSessionSizeBytesRaw != "" {
         if p, err := strconv.ParseInt(maxMemcacheSessionSizeBytesRaw, 10, 64); err != nil {
             panic(err)
         } else {
