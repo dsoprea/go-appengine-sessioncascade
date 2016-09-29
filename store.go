@@ -230,7 +230,7 @@ func (cs *CascadeStore) setInRequest(r *http.Request, session *sessions.Session,
     defer func() {
         if r := recover(); r != nil {
             err := r.(error)
-            store_log.Errorf(ctx, "Could not save session in request: %s", err)
+            store_log.Errorf(ctx, err, "Could not save session in request")
         }
     }()
 
@@ -268,7 +268,7 @@ func (cs *CascadeStore) setInMemcache(r *http.Request, session *sessions.Session
     defer func() {
         if r := recover(); r != nil {
             err := r.(error)
-            store_log.Errorf(ctx, "Could not save session in Memcache: %s", err)
+            store_log.Errorf(ctx, err, "Could not save session in Memcache")
         }
     }()
 
@@ -312,7 +312,7 @@ func (cs *CascadeStore) save(r *http.Request, session *sessions.Session) (err er
     defer func() {
         if r := recover(); r != nil {
             err := r.(error)
-            store_log.Errorf(ctx, "Could not save session: %s", err)
+            store_log.Errorf(ctx, err, "Could not save session")
         }
     }()
 
@@ -362,7 +362,7 @@ func (cs *CascadeStore) load(r *http.Request, session *sessions.Session) (succes
     defer func() {
         if r := recover(); r != nil {
             err := r.(error)
-            store_log.Errorf(ctx, "Could not load session: %s", err)
+            store_log.Errorf(ctx, err, "Could not load session")
         }
     }()
 
@@ -448,7 +448,7 @@ func (cs *CascadeStore) delete(r *http.Request, session *sessions.Session) (err 
     defer func() {
         if r := recover(); r != nil {
             err := r.(error)
-            store_log.Errorf(ctx, "Could not delete session: %s", err)
+            store_log.Errorf(ctx, err, "Could not delete session")
         }
     }()
 
