@@ -18,8 +18,7 @@ import (
     "github.com/gorilla/securecookie"
     "github.com/gorilla/sessions"
     gcontext "github.com/gorilla/context"
-    "github.com/dsoprea/go-appengine-logging"
-
+    "github.com/dsoprea/go-logging"
 )
 
 // Config keys
@@ -218,6 +217,10 @@ func (cs *CascadeStore) Save(r *http.Request, w http.ResponseWriter, session *se
 
         http.SetCookie(w, sessions.NewCookie(session.Name(), "", session.Options))
     } else {
+// TODO(dustin): !! No matter what (however we succeed) we need to set the 
+//                  cookie. However, we need to not write if nothing has 
+//                  changed.
+
         // This should be assigned in the New() or recovered with an existing 
         // session.
         if session.ID == "" {
